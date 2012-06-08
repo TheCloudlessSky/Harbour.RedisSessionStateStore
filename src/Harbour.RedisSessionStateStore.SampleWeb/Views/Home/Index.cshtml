@@ -1,0 +1,23 @@
+﻿@{
+    ViewBag.Title = "Index";
+}
+
+<h2>SessionId: @Context.Request.Cookies["ASP.NET_SessionId"].Value</h2>
+
+<h2>Name: @Session["name"]</h2>
+<h2>Age: @Session["age"]</h2>
+@using (Html.BeginForm())
+{
+<fieldset>
+    <legend>New Data</legend>
+
+    <label>Name: @Html.TextBox("name", "", new { autocomplete = "off" })</label><br />
+    <label>Age: @Html.TextBox("age", "", new { autocomplete = "off" })</label><br />
+    <input type="submit" value="Save" />
+</fieldset>
+}
+
+@using (Html.BeginForm("abandonsession", "home"))
+{
+    <input type="submit" value="Abandon Session" />
+}

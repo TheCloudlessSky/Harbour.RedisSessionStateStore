@@ -1,0 +1,118 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003" ToolsVersion="4.0" DefaultTargets="Go">
+    
+    <PropertyGroup>
+        <Configuration Condition="'$(Configuration)'==''">Release</Configuration>
+        <RootDirectory>$(MSBuildProjectDirectory)\..</RootDirectory>
+        <BuildRoot>$(RootDirectory)\build</BuildRoot>
+        <DropRoot>$(RootDirectory)\bin</DropRoot>
+        <SourceRoot>$(RootDirectory)\src</SourceRoot>
+        <ToolsRoot>$(RootDirectory)\tools</ToolsRoot>
+        <LibRoot>$(RootDirectory)\lib</LibRoot>
+        <TestsRoot>$(RootDirectory)\tests</TestsRoot>
+        
+        <DropOutputDirectory>$(DropRoot)\$(Configuration)</DropOutputDirectory>
+        
+        <OutputDirectory>$(SourceRoot)\Harbour.RedisSessionStateStore\bin\$(Configuration)</OutputDirectory>
+        
+        <MSBuildExtensionPackLib>$(ToolsRoot)\MSBuild.ExtensionPack\MSBuild.ExtensionPack.dll</MSBuildExtensionPackLib>
+        <XUnitLib>$(LibRoot)\xunit.1.9.0.1566\lib\xunit.runner.msbuild.dll</XUnitLib>
+    </PropertyGroup>
+    
+    <PropertyGroup>
+        <MajorVersion>1</MajorVersion>
+        <MinorVersion>0</MinorVersion>
+        <PatchVersion>0</PatchVersion>
+        <Version>$(MajorVersion).$(MinorVersion).$(PatchVersion).0</Version>
+    </PropertyGroup>
+    
+    <UsingTask AssemblyFile="$(MSBuildExtensionPackLib)" TaskName="MSBuild.ExtensionPack.Compression.Zip" />
+    <UsingTask AssemblyFile="$(MSBuildExtensionPackLib)" TaskName="MSBuild.ExtensionPack.Framework.AssemblyInfo" />
+    <UsingTask AssemblyFile="$(MSBuildExtensionPackLib)" TaskName="MSBuild.ExtensionPack.Framework.AsyncExec" />
+    <UsingTask AssemblyFile="$(XUnitLib)" TaskName="Xunit.Runner.MSBuild.xunit" />
+    
+    <Target Name="Go" DependsOnTargets="Build; RunTests; CopyOutputToDropDirectory; BuildPackage;" />
+    
+    <Target Name="UpdateVersion">
+        
+        <CallTarget Targets="ReportVersion" />
+        
+        <Copy SourceFiles="$(SourceRoot)\CommonAssemblyInfo.cs"
+            DestinationFiles="$(SourceRoot)\CommonAssemblyInfo.cs.old" />
+
+        <AssemblyInfo 
+            AssemblyInfoFiles="$(SourceRoot)\CommonAssemblyInfo.cs"
+            AssemblyVersion="$(Version)"
+            AssemblyFileVersion="$(Version)" />
+    </Target>
+    
+    <Target Name="ReportVersion">
+        <Message Text="##teamcity[buildNumber '$(Version)']" />
+    </Target>
+    
+    <Target Name="UpdateVersionCleanup">
+        <Copy SourceFiles="$(SourceRoot)\CommonAssemblyInfo.cs.old"
+            DestinationFiles="$(SourceRoot)\CommonAssemblyInfo.cs" />
+        <Delete Files="$(SourceRoot)\CommonAssemblyInfo.cs.old" />
+    </Target>
+    
+    <Target Name="Build">
+        <CallTarget Targets="UpdateVersion" />
+        
+        <MSBuild Projects="$(SourceRoot)\Harbour.RedisSessionStateStore.sln" Properties="Configuration=$(Configuration);nowarn=1573" />
+        
+        <CallTarget Targets="UpdateVersionCleanup" />
+        <OnError ExecuteTargets="UpdateVersionCleanup" />
+    </Target>
+    
+    <Target Name="RunTests" Condition="'$(SkipTests)'==''" DependsOnTargets="_StartRedis;_ExecTests;_StopRedis">
+        <OnError ExecuteTargets="_StopRedis" />
+    </Target>
+    
+    <Target Name="_ExecTests">
+        <ItemGroup>
+            <TestItems Include="$(TestsRoot)\Harbour.RedisSessionStateStore.Tests\bin\$(Configuration)\Harbour.RedisSessionStateStore.Tests.dll" />
+        </ItemGroup>
+    
+        <xunit Assembly="@(TestItems)" TeamCity="true" />
+    </Target>
+
+    <Target Name="_StartRedis">
+        <AsyncExec Command="$(TestsRoot)\start-redis.bat" />
+    </Target>
+
+    <Target Name="_StopRedis">
+        <Exec Command="$(TestsRoot)\stop-redis.bat" />
+    </Target>
+    
+    <Target Name="CopyOutputToDropDirectory">
+    
+        <RemoveDir Directories="$(DropRoot)" Condition="Exists('$(DropRoot)')" ContinueOnError="True" />
+        
+        <ItemGroup>
+            <FilesToZip Include="$(OutputDirectory)\**\*.*" />
+        </ItemGroup>
+
+        <Copy SourceFiles="@(FilesToZip)" DestinationFolder="$(DropOutputDirectory)\%(RecursiveDir)" />
+
+        <Message Text="Zip: @(FilesToZip)" />
+
+        <Zip TaskAction="Create" CompressFiles="@(FilesToZip)"
+            ZipFileName="$(DropRoot)\Harbour.RedisSessionStateStore-$(Version).zip" 
+            RemoveRoot="$(OutputDirectory)" />
+        
+    </Target>
+    
+    <Target Name="BuildPackage">                
+        <Exec WorkingDirectory="$(DropRoot)" 
+            Command="$(ToolsRoot)\nuget\nuget.exe pack $(BuildRoot)\Harbour.RedisSessionStateStore.nuspec -Version &quot;$(Version)&quot; -OutputDirectory &quot;$(DropRoot)&quot;" />        
+    </Target>
+
+    <Target Name="PublishPackage">
+        <ItemGroup>
+            <PackageFiles Include="$(DropRoot)\*.nupkg" />
+        </ItemGroup>
+        <Exec WorkingDirectory="$(DropRoot)"
+            Command="$(ToolsRoot)\nuget\nuget.exe push @(PackageFiles) $(NuGetApiKey)" />
+    </Target>
+</Project>
