@@ -1,0 +1,36 @@
+# use glob syntax
+syntax: glob
+
+*.obj
+src/*.exe
+src/*.pdb
+src/*.old
+App_Data/*
+*.user
+*.aps
+*.pch
+*.vspscc
+*_i.c
+*_p.c
+*.ncb
+*.suo
+*.tlb
+*.tlh
+*.bak
+*.cache
+*.ilk
+*.log
+*.lib
+*.sbr
+*.scc
+*.rdb
+-[Dd]ist
+[Bb]in
+[Dd]ebug*/
+obj/
+[Rr]elease*/
+_ReSharper*/
+[Tt]est[Rr]esult*
+[Tt]est
+[Bb]uild[Ll]og.*
+*.[Pp]ublish.xml
