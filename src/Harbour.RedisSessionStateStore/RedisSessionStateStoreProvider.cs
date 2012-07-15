@@ -165,7 +165,7 @@ namespace Harbour.RedisSessionStateStore
         public override void CreateUninitializedItem(HttpContext context, string id, int timeout)
         {
             var key = this.GetSessionIdKey(id);
-            using (var client = this.GetClient())
+            using (var client = this.GetClientAndWatch(key))
             {
                 var state = new RedisSessionState()
                 {
@@ -194,30 +194,40 @@ namespace Harbour.RedisSessionStateStore
             
         }
 
-        private IRedisClient GetClient()
+        private IRedisClient GetClientAndWatch(string key)
         {
-            return this.clientManager.GetClient();
+            var client = this.clientManager.GetClient();
+            client.Watch(key);
+            return client;
         }
 
         public override void ResetItemTimeout(HttpContext context, string id)
         {
             var key = this.GetSessionIdKey(id);
-            using (var client = this.GetClient())
+            using (var client = this.GetClientAndWatch(key))
+            using (var transaction = client.CreateTransaction())
             {
-                client.ExpireEntryIn(key, TimeSpan.FromMinutes(this.sessionTimeoutMinutes));
+                transaction.QueueCommand(c => c.ExpireEntryIn(key, TimeSpan.FromMinutes(this.sessionTimeoutMinutes)));
+                transaction.Commit();
             }
         }
 
         public override void RemoveItem(HttpContext context, string id, object lockId, SessionStateStoreData item)
         {
             var key = this.GetSessionIdKey(id);
-            using (var client = this.GetClient())
+            using (var client = this.GetClientAndWatch(key))
             {
                 var stateRaw = client.GetAllEntriesFromHashRaw(key);
-                RedisSessionState state;
-                if (RedisSessionState.TryParse(stateRaw, out state) && state.Locked && state.LockId == (int)lockId)
+
+                using (var transaction = client.CreateTransaction())
                 {
-                    client.Remove(key);
+                    RedisSessionState state;
+                    if (RedisSessionState.TryParse(stateRaw, out state) && state.Locked && state.LockId == (int)lockId)
+                    {
+                        transaction.QueueCommand(c => c.Remove(key));
+                    }
+
+                    transaction.Commit();
                 }
             }
         }
@@ -241,13 +251,14 @@ namespace Harbour.RedisSessionStateStore
             lockId = null;
             actions = SessionStateActions.None;
 
-            using (var client = this.GetClient())
+            using (var client = this.GetClientAndWatch(key))
             {
                 var stateRaw = client.GetAllEntriesFromHashRaw(key);
 
                 RedisSessionState state;
                 if (!RedisSessionState.TryParse(stateRaw, out state))
                 {
+                    client.UnWatch();
                     return null;
                 }
 
@@ -256,6 +267,7 @@ namespace Harbour.RedisSessionStateStore
 
                 if (state.Locked)
                 {
+                    client.UnWatch();
                     locked = true;
                     lockId = state.LockId;
                     lockAge = DateTime.UtcNow - state.LockDate;
@@ -286,7 +298,7 @@ namespace Harbour.RedisSessionStateStore
         public override void ReleaseItemExclusive(HttpContext context, string id, object lockId)
         {
             var key = this.GetSessionIdKey(id);
-            using (var client = this.GetClient())
+            using (var client = this.GetClientAndWatch(key))
             {
                 this.UpdateSessionStateIfLocked(client, key, (int)lockId, state =>
                 {
@@ -299,7 +311,7 @@ namespace Harbour.RedisSessionStateStore
         public override void SetAndReleaseItemExclusive(HttpContext context, string id, SessionStateStoreData item, object lockId, bool newItem)
         {
             var key = this.GetSessionIdKey(id);
-            using (var client = this.GetClient())
+            using (var client = this.GetClientAndWatch(key))
             {
                 if (newItem)
                 {
