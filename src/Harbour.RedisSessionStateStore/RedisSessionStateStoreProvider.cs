@@ -215,17 +215,30 @@ namespace Harbour.RedisSessionStateStore
                 }
             }
         }
-        
+
+        private void UseTransaction(IRedisClient client, Action<IRedisTransaction> action)
+        {
+            using (var transaction = client.CreateTransaction())
+            {
+                action(transaction);
+
+                // Attempt one retry if the transaction failed.
+                if (!transaction.Commit())
+                {
+                    transaction.Replay();
+                }
+            }
+        }
+
         public override void ResetItemTimeout(HttpContext context, string id)
         {
             var key = GetSessionIdKey(id);
             WatchAndUseClient(key, client =>
             {
-                using (var transaction = client.CreateTransaction())
+                UseTransaction(client, transaction =>
                 {
                     transaction.QueueCommand(c => c.ExpireEntryIn(key, TimeSpan.FromMinutes(sessionTimeoutMinutes)));
-                    transaction.Commit();
-                }
+                });
             });
         }
 
@@ -236,16 +249,14 @@ namespace Harbour.RedisSessionStateStore
             {
                 var stateRaw = client.GetAllEntriesFromHashRaw(key);
 
-                using (var transaction = client.CreateTransaction())
+                UseTransaction(client, transaction =>
                 {
                     RedisSessionState state;
                     if (RedisSessionState.TryParse(stateRaw, out state) && state.Locked && state.LockId == (int)lockId)
                     {
                         transaction.QueueCommand(c => c.Remove(key));
                     }
-
-                    transaction.Commit();
-                }
+                });
             });
         }
 
@@ -301,12 +312,11 @@ namespace Harbour.RedisSessionStateStore
 
                 state.Flags = SessionStateActions.None;
 
-                using (var t = client.CreateTransaction())
+                UseTransaction(client, transaction =>
                 {
-                    t.QueueCommand(c => c.SetRangeInHashRaw(key, state.ToMap()));
-                    t.QueueCommand(c => c.ExpireEntryIn(key, TimeSpan.FromMinutes(state.Timeout)));
-                    t.Commit();
-                }
+                    transaction.QueueCommand(c => c.SetRangeInHashRaw(key, state.ToMap()));
+                    transaction.QueueCommand(c => c.ExpireEntryIn(key, TimeSpan.FromMinutes(state.Timeout)));
+                });
 
                 result = new SessionStateStoreData(items, staticObjectsGetter(context), state.Timeout);
             });
@@ -372,12 +382,11 @@ namespace Harbour.RedisSessionStateStore
 
         private void UpdateSessionState(IRedisClient client, string key, RedisSessionState state)
         {
-            using (var transaction = client.CreateTransaction())
+            UseTransaction(client, transaction =>
             {
                 transaction.QueueCommand(c => c.SetRangeInHashRaw(key, state.ToMap()));
                 transaction.QueueCommand(c => c.ExpireEntryIn(key, TimeSpan.FromMinutes(state.Timeout)));
-                transaction.Commit();
-            }
+            });
         }
 
         public override bool SetItemExpireCallback(SessionStateItemExpireCallback expireCallback)
