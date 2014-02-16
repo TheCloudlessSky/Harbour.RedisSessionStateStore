@@ -42,13 +42,13 @@ namespace Harbour.RedisSessionStateStore
     ///   protected void Application_Start()
     ///   {
     ///       // Or use your IoC container to wire this up.
-    ///       this.clientManager = new PooledRedisClientManager("localhost:6379");
-    ///       RedisSessionStateStoreProvider.SetClientManager(this.clientManager);
+    ///       clientManager = new PooledRedisClientManager("localhost:6379");
+    ///       RedisSessionStateStoreProvider.SetClientManager(clientManager);
     ///   }
     ///  
     ///   protected void Application_End()
     ///   {
-    ///       this.clientManager.Dispose();
+    ///       clientManager.Dispose();
     ///   }
     /// ]]>
     /// </code>
@@ -67,7 +67,7 @@ namespace Harbour.RedisSessionStateStore
         /// <summary>
         /// Gets the client manager for the provider.
         /// </summary>
-        public IRedisClientsManager ClientManager { get { return this.clientManager; } }
+        public IRedisClientsManager ClientManager { get { return clientManager; } }
 
         internal RedisSessionStateStoreProvider(Func<HttpContext, HttpStaticObjectsCollection> staticObjectsGetter)
         {
@@ -78,7 +78,7 @@ namespace Harbour.RedisSessionStateStore
 
         public RedisSessionStateStoreProvider()
         {
-            this.staticObjectsGetter = ctx => SessionStateUtility.GetSessionStaticObjects(ctx);
+            staticObjectsGetter = ctx => SessionStateUtility.GetSessionStaticObjects(ctx);
         }
 
         /// <summary>
@@ -113,7 +113,7 @@ namespace Harbour.RedisSessionStateStore
             this.name = name;
 
             var sessionConfig = (SessionStateSection)WebConfigurationManager.GetSection("system.web/sessionState");
-            this.sessionTimeoutMinutes = (int)sessionConfig.Timeout.TotalMinutes;
+            sessionTimeoutMinutes = (int)sessionConfig.Timeout.TotalMinutes;
 
             lock (locker)
             {
@@ -122,13 +122,13 @@ namespace Harbour.RedisSessionStateStore
                     var host = config["host"];
                     var clientType = config["clientType"];
 
-                    this.clientManager = this.CreateClientManager(clientType, host);
-                    this.manageClientManagerLifetime = true;
+                    clientManager = CreateClientManager(clientType, host);
+                    manageClientManagerLifetime = true;
                 }
                 else
                 {
-                    this.clientManager = clientManagerStatic;
-                    this.manageClientManagerLifetime = false;
+                    clientManager = clientManagerStatic;
+                    manageClientManagerLifetime = false;
                 }
             }
 
@@ -159,13 +159,13 @@ namespace Harbour.RedisSessionStateStore
 
         private string GetSessionIdKey(string id)
         {
-            return this.name + "/" + id;
+            return name + "/" + id;
         }
 
         public override void CreateUninitializedItem(HttpContext context, string id, int timeout)
         {
-            var key = this.GetSessionIdKey(id);
-            using (var client = this.GetClientAndWatch(key))
+            var key = GetSessionIdKey(id);
+            using (var client = GetClientAndWatch(key))
             {
                 var state = new RedisSessionState()
                 {
@@ -173,14 +173,14 @@ namespace Harbour.RedisSessionStateStore
                     Flags = SessionStateActions.InitializeItem
                 };
 
-                this.UpdateSessionState(client, key, state);
+                UpdateSessionState(client, key, state);
             }
         }
 
         public override SessionStateStoreData CreateNewStoreData(HttpContext context, int timeout)
         {
             return new SessionStateStoreData(new SessionStateItemCollection(),
-               this.staticObjectsGetter(context),
+               staticObjectsGetter(context),
                timeout);
         }
 
@@ -196,26 +196,26 @@ namespace Harbour.RedisSessionStateStore
 
         private IRedisClient GetClientAndWatch(string key)
         {
-            var client = this.clientManager.GetClient();
+            var client = clientManager.GetClient();
             client.Watch(key);
             return client;
         }
 
         public override void ResetItemTimeout(HttpContext context, string id)
         {
-            var key = this.GetSessionIdKey(id);
-            using (var client = this.GetClientAndWatch(key))
+            var key = GetSessionIdKey(id);
+            using (var client = GetClientAndWatch(key))
             using (var transaction = client.CreateTransaction())
             {
-                transaction.QueueCommand(c => c.ExpireEntryIn(key, TimeSpan.FromMinutes(this.sessionTimeoutMinutes)));
+                transaction.QueueCommand(c => c.ExpireEntryIn(key, TimeSpan.FromMinutes(sessionTimeoutMinutes)));
                 transaction.Commit();
             }
         }
 
         public override void RemoveItem(HttpContext context, string id, object lockId, SessionStateStoreData item)
         {
-            var key = this.GetSessionIdKey(id);
-            using (var client = this.GetClientAndWatch(key))
+            var key = GetSessionIdKey(id);
+            using (var client = GetClientAndWatch(key))
             {
                 var stateRaw = client.GetAllEntriesFromHashRaw(key);
 
@@ -234,24 +234,24 @@ namespace Harbour.RedisSessionStateStore
 
         public override SessionStateStoreData GetItem(HttpContext context, string id, out bool locked, out TimeSpan lockAge, out object lockId, out SessionStateActions actions)
         {
-            return this.GetItem(false, context, id, out locked, out lockAge, out lockId, out actions);
+            return GetItem(false, context, id, out locked, out lockAge, out lockId, out actions);
         }
 
         public override SessionStateStoreData GetItemExclusive(HttpContext context, string id, out bool locked, out TimeSpan lockAge, out object lockId, out SessionStateActions actions)
         {
-            return this.GetItem(true, context, id, out locked, out lockAge, out lockId, out actions);
+            return GetItem(true, context, id, out locked, out lockAge, out lockId, out actions);
         }
 
         private SessionStateStoreData GetItem(bool isExclusive, HttpContext context, string id, out bool locked, out TimeSpan lockAge, out object lockId, out SessionStateActions actions)
         {
-            var key = this.GetSessionIdKey(id);
+            var key = GetSessionIdKey(id);
 
             locked = false;
             lockAge = TimeSpan.Zero;
             lockId = null;
             actions = SessionStateActions.None;
 
-            using (var client = this.GetClientAndWatch(key))
+            using (var client = GetClientAndWatch(key))
             {
                 var stateRaw = client.GetAllEntriesFromHashRaw(key);
 
@@ -291,27 +291,27 @@ namespace Harbour.RedisSessionStateStore
                     t.Commit();
                 }
 
-                return new SessionStateStoreData(items, this.staticObjectsGetter(context), state.Timeout);
+                return new SessionStateStoreData(items, staticObjectsGetter(context), state.Timeout);
             }
         }
 
         public override void ReleaseItemExclusive(HttpContext context, string id, object lockId)
         {
-            var key = this.GetSessionIdKey(id);
-            using (var client = this.GetClientAndWatch(key))
+            var key = GetSessionIdKey(id);
+            using (var client = GetClientAndWatch(key))
             {
-                this.UpdateSessionStateIfLocked(client, key, (int)lockId, state =>
+                UpdateSessionStateIfLocked(client, key, (int)lockId, state =>
                 {
                     state.Locked = false;
-                    state.Timeout = this.sessionTimeoutMinutes;
+                    state.Timeout = sessionTimeoutMinutes;
                 });
             }
         }
 
         public override void SetAndReleaseItemExclusive(HttpContext context, string id, SessionStateStoreData item, object lockId, bool newItem)
         {
-            var key = this.GetSessionIdKey(id);
-            using (var client = this.GetClientAndWatch(key))
+            var key = GetSessionIdKey(id);
+            using (var client = GetClientAndWatch(key))
             {
                 if (newItem)
                 {
@@ -321,11 +321,11 @@ namespace Harbour.RedisSessionStateStore
                         Timeout = item.Timeout,
                     };
 
-                    this.UpdateSessionState(client, key, state);
+                    UpdateSessionState(client, key, state);
                 }
                 else
                 {
-                    this.UpdateSessionStateIfLocked(client, key, (int)lockId, state =>
+                    UpdateSessionStateIfLocked(client, key, (int)lockId, state =>
                     {
                         state.Items = (SessionStateItemCollection)item.Items;
                         state.Locked = false;
@@ -342,7 +342,7 @@ namespace Harbour.RedisSessionStateStore
             if (RedisSessionState.TryParse(stateRaw, out state) && state.Locked && state.LockId == (int)lockId)
             {
                 stateAction(state);
-                this.UpdateSessionState(client, key, state);
+                UpdateSessionState(client, key, state);
             }
         }
 
@@ -363,9 +363,9 @@ namespace Harbour.RedisSessionStateStore
 
         public override void Dispose()
         {
-            if (this.manageClientManagerLifetime)
+            if (manageClientManagerLifetime)
             {
-                this.clientManager.Dispose();
+                clientManager.Dispose();
             }
         }
 
