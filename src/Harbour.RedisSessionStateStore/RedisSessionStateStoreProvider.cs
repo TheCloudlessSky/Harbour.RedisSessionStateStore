@@ -382,6 +382,11 @@ namespace Harbour.RedisSessionStateStore
 
         public override bool SetItemExpireCallback(SessionStateItemExpireCallback expireCallback)
         {
+            // Redis < 2.8 doesn't easily support key expiry notifications.
+            // As of Redis 2.8, keyspace notifications (http://redis.io/topics/notifications)
+            // can be used. Therefore, if you'd like to support the expiry
+            // callback and are using Redis 2.8, you can inherit from this
+            // class and implement it.
             return false;
         }
 
