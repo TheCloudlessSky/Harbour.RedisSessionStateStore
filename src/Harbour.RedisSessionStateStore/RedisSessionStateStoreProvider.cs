@@ -165,7 +165,7 @@ namespace Harbour.RedisSessionStateStore
         public override void CreateUninitializedItem(HttpContext context, string id, int timeout)
         {
             var key = GetSessionIdKey(id);
-            using (var client = GetClientAndWatch(key))
+            WatchAndUseClient(key, client =>
             {
                 var state = new RedisSessionState()
                 {
@@ -174,7 +174,7 @@ namespace Harbour.RedisSessionStateStore
                 };
 
                 UpdateSessionState(client, key, state);
-            }
+            });
         }
 
         public override SessionStateStoreData CreateNewStoreData(HttpContext context, int timeout)
@@ -194,28 +194,45 @@ namespace Harbour.RedisSessionStateStore
             
         }
 
-        private IRedisClient GetClientAndWatch(string key)
+        private void WatchAndUseClient(string key, Action<IRedisClient> action)
         {
-            var client = clientManager.GetClient();
-            client.Watch(key);
-            return client;
-        }
+            using (var client = clientManager.GetClient())
+            {
+                try
+                {
+                    client.Watch(key);
 
+                    action(client);
+                }
+                finally
+                {
+                    // If EXEC or DISCARD are called, we don't need to UNWATCH.
+                    // However, when using the client, we might not ever enter a
+                    // transaction. Therefore, we always UNWATCH so that the 
+                    // connection can be used freely for new transactions 
+                    // (especially if the PooledRedisClientManager is used).
+                    client.UnWatch();
+                }
+            }
+        }
+        
         public override void ResetItemTimeout(HttpContext context, string id)
         {
             var key = GetSessionIdKey(id);
-            using (var client = GetClientAndWatch(key))
-            using (var transaction = client.CreateTransaction())
+            WatchAndUseClient(key, client =>
             {
-                transaction.QueueCommand(c => c.ExpireEntryIn(key, TimeSpan.FromMinutes(sessionTimeoutMinutes)));
-                transaction.Commit();
-            }
+                using (var transaction = client.CreateTransaction())
+                {
+                    transaction.QueueCommand(c => c.ExpireEntryIn(key, TimeSpan.FromMinutes(sessionTimeoutMinutes)));
+                    transaction.Commit();
+                }
+            });
         }
 
         public override void RemoveItem(HttpContext context, string id, object lockId, SessionStateStoreData item)
         {
             var key = GetSessionIdKey(id);
-            using (var client = GetClientAndWatch(key))
+            WatchAndUseClient(key, client =>
             {
                 var stateRaw = client.GetAllEntriesFromHashRaw(key);
 
@@ -229,7 +246,7 @@ namespace Harbour.RedisSessionStateStore
 
                     transaction.Commit();
                 }
-            }
+            });
         }
 
         public override SessionStateStoreData GetItem(HttpContext context, string id, out bool locked, out TimeSpan lockAge, out object lockId, out SessionStateActions actions)
@@ -244,42 +261,42 @@ namespace Harbour.RedisSessionStateStore
 
         private SessionStateStoreData GetItem(bool isExclusive, HttpContext context, string id, out bool locked, out TimeSpan lockAge, out object lockId, out SessionStateActions actions)
         {
+            // Capture the out parameters since they can't be used inside of an
+            // anonymous method.
+            bool localLocked = false;
+            TimeSpan localLockAge = TimeSpan.Zero;
+            object localLockId = null;
+            SessionStateActions localActions = SessionStateActions.None;
+            SessionStateStoreData result = null;
+
             var key = GetSessionIdKey(id);
-
-            locked = false;
-            lockAge = TimeSpan.Zero;
-            lockId = null;
-            actions = SessionStateActions.None;
-
-            using (var client = GetClientAndWatch(key))
+            WatchAndUseClient(key, client =>
             {
                 var stateRaw = client.GetAllEntriesFromHashRaw(key);
 
                 RedisSessionState state;
                 if (!RedisSessionState.TryParse(stateRaw, out state))
                 {
-                    client.UnWatch();
-                    return null;
+                    return;
                 }
 
-                actions = state.Flags;
-                var items = actions == SessionStateActions.InitializeItem ? new SessionStateItemCollection() : state.Items;
+                localActions = state.Flags;
+                var items = localActions == SessionStateActions.InitializeItem ? new SessionStateItemCollection() : state.Items;
 
                 if (state.Locked)
                 {
-                    client.UnWatch();
-                    locked = true;
-                    lockId = state.LockId;
-                    lockAge = DateTime.UtcNow - state.LockDate;
-                    return null;
+                    localLocked = true;
+                    localLockId = state.LockId;
+                    localLockAge = DateTime.UtcNow - state.LockDate;
+                    return;
                 }
 
                 if (isExclusive)
                 {
-                    locked = state.Locked = true;
+                    localLocked = state.Locked = true;
                     state.LockDate = DateTime.UtcNow;
-                    lockAge = TimeSpan.Zero;
-                    lockId = ++state.LockId;
+                    localLockAge = TimeSpan.Zero;
+                    localLockId = ++state.LockId;
                 }
 
                 state.Flags = SessionStateActions.None;
@@ -291,27 +308,34 @@ namespace Harbour.RedisSessionStateStore
                     t.Commit();
                 }
 
-                return new SessionStateStoreData(items, staticObjectsGetter(context), state.Timeout);
-            }
+                result = new SessionStateStoreData(items, staticObjectsGetter(context), state.Timeout);
+            });
+
+            // Restore out parameters from the anonymous method.
+            locked = localLocked;
+            lockAge = localLockAge;
+            lockId = localLockId;
+            actions = localActions;
+            return result;
         }
 
         public override void ReleaseItemExclusive(HttpContext context, string id, object lockId)
         {
             var key = GetSessionIdKey(id);
-            using (var client = GetClientAndWatch(key))
+            WatchAndUseClient(key, client =>
             {
                 UpdateSessionStateIfLocked(client, key, (int)lockId, state =>
                 {
                     state.Locked = false;
                     state.Timeout = sessionTimeoutMinutes;
                 });
-            }
+            });
         }
 
         public override void SetAndReleaseItemExclusive(HttpContext context, string id, SessionStateStoreData item, object lockId, bool newItem)
         {
             var key = GetSessionIdKey(id);
-            using (var client = GetClientAndWatch(key))
+            WatchAndUseClient(key, client =>
             {
                 if (newItem)
                 {
@@ -332,7 +356,7 @@ namespace Harbour.RedisSessionStateStore
                         state.Timeout = item.Timeout;
                     });
                 }
-            }
+            });
         }
 
         private void UpdateSessionStateIfLocked(IRedisClient client, string key, int lockId, Action<RedisSessionState> stateAction)
@@ -348,11 +372,11 @@ namespace Harbour.RedisSessionStateStore
 
         private void UpdateSessionState(IRedisClient client, string key, RedisSessionState state)
         {
-            using (var t = client.CreateTransaction())
+            using (var transaction = client.CreateTransaction())
             {
-                t.QueueCommand(c => c.SetRangeInHashRaw(key, state.ToMap()));
-                t.QueueCommand(c => c.ExpireEntryIn(key, TimeSpan.FromMinutes(state.Timeout)));
-                t.Commit();
+                transaction.QueueCommand(c => c.SetRangeInHashRaw(key, state.ToMap()));
+                transaction.QueueCommand(c => c.ExpireEntryIn(key, TimeSpan.FromMinutes(state.Timeout)));
+                transaction.Commit();
             }
         }
 
