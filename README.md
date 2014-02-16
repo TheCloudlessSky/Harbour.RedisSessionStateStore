@@ -8,7 +8,7 @@ Installation
 ------------
 
 1. You can either install using NuGet: `PM> Install-Package Harbour.RedisSessionStateStore`
-2. Or install from source: `msbuild .\build\build.proj`
+2. Or build and install from source: `msbuild .\build\build.proj`
 
 Usage
 -----
@@ -16,7 +16,6 @@ Usage
 Configure your `web.config` to use the session state provider:
 
 ```xml
-...
 <system.web>
   <sessionState mode="Custom" customProvider="RedisSessionStateProvider">
     <providers>
@@ -27,7 +26,6 @@ Configure your `web.config` to use the session state provider:
     </providers>
   </sessionState>
 </system.web>
-...
 ```
 
 This configuration will use a `PooledRedisClientManager` and use the default host
@@ -54,3 +52,16 @@ protected void Application_End()
     this.clientManager.Dispose();
 }
 ```
+
+Changelog
+---------
+
+### v1.2.0
+- Always ensure UNWATCH is called.
+- Retry a transaction once if it fails.
+
+### v1.1.0
+- Add WATCH/UNWATCH pattern for transactions.
+
+### v1.0.0
+- Initial release.
