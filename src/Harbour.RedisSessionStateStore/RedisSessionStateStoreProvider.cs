@@ -123,7 +123,7 @@ namespace Harbour.RedisSessionStateStore
                     var clientType = config["clientType"];
 
                     this.clientManager = this.CreateClientManager(clientType, host);
-                    this.manageClientManagerLifetime = false;
+                    this.manageClientManagerLifetime = true;
                 }
                 else
                 {
