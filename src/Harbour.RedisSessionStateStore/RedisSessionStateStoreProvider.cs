@@ -57,12 +57,14 @@ namespace Harbour.RedisSessionStateStore
     public sealed class RedisSessionStateStoreProvider : SessionStateStoreProviderBase
     {
         private static IRedisClientsManager clientManagerStatic;
+        private static RedisSessionStateStoreOptions options;
         private static object locker = new object();
 
         private readonly Func<HttpContext, HttpStaticObjectsCollection> staticObjectsGetter;
         private IRedisClientsManager clientManager;
         private bool manageClientManagerLifetime;
         private string name;
+
         private int sessionTimeoutMinutes;
 
         /// <summary>
@@ -74,8 +76,6 @@ namespace Harbour.RedisSessionStateStore
         {
             this.staticObjectsGetter = staticObjectsGetter;
         }
-
-#pragma warning disable 1591
 
         public RedisSessionStateStoreProvider()
         {
@@ -99,9 +99,27 @@ namespace Harbour.RedisSessionStateStore
             clientManagerStatic = clientManager;
         }
 
+        public static void SetOptions(RedisSessionStateStoreOptions options)
+        {
+            if (options == null) throw new ArgumentNullException("options");
+            if (RedisSessionStateStoreProvider.options != null)
+            {
+                throw new InvalidOperationException("The options have already been configured.");
+            }
+
+            // Clone so that we don't allow references to be modified once 
+            // configured.
+            RedisSessionStateStoreProvider.options = new RedisSessionStateStoreOptions(options);
+        }
+
         internal static void ResetClientManager()
         {
             clientManagerStatic = null;
+        }
+
+        internal static void ResetOptions()
+        {
+            options = null;
         }
         
         public override void Initialize(string name, NameValueCollection config)
@@ -112,12 +130,18 @@ namespace Harbour.RedisSessionStateStore
             }
 
             this.name = name;
-
+            
             var sessionConfig = (SessionStateSection)WebConfigurationManager.GetSection("system.web/sessionState");
+
             sessionTimeoutMinutes = (int)sessionConfig.Timeout.TotalMinutes;
 
             lock (locker)
             {
+                if (options == null)
+                {
+                    SetOptions(new RedisSessionStateStoreOptions());
+                }
+
                 if (clientManagerStatic == null)
                 {
                     var host = config["host"];
@@ -175,13 +199,17 @@ namespace Harbour.RedisSessionStateStore
         /// <returns></returns>
         private DisposableDistributedLock GetDistributedLock(IRedisClient client, string key)
         {
-            var lockKey = key + "/lock";
-            return new DisposableDistributedLock(client, lockKey, acquisitionTimeout: 1/*second*/, lockTimeout: 1/*second*/);
+            var lockKey = key + options.KeySeparator + "lock";
+            return new DisposableDistributedLock(
+                client, lockKey, 
+                options.DistributedLockAcquisitionTimeoutSeconds.Value, 
+                options.DistributedLockTimeoutSeconds.Value
+            );
         }
 
         private string GetSessionIdKey(string id)
         {
-            return name + "/" + id;
+            return name + options.KeySeparator + id;
         }
 
         public override void CreateUninitializedItem(HttpContext context, string id, int timeout)
@@ -245,6 +273,7 @@ namespace Harbour.RedisSessionStateStore
             {
                 if (distributedLock.LockState == DistributedLock.LOCK_NOT_ACQUIRED)
                 {
+                    options.OnDistributedLockNotAcquired(id);
                     return;
                 }
 
@@ -285,6 +314,7 @@ namespace Harbour.RedisSessionStateStore
             {
                 if (distributedLock.LockState == DistributedLock.LOCK_NOT_ACQUIRED)
                 {
+                    options.OnDistributedLockNotAcquired(id);
                     return null;
                 }
 
@@ -332,10 +362,9 @@ namespace Harbour.RedisSessionStateStore
 
         public override void ReleaseItemExclusive(HttpContext context, string id, object lockId)
         {
-            var key = GetSessionIdKey(id);
             using (var client = GetClient())
             {
-                UpdateSessionStateIfLocked(client, key, (int)lockId, state =>
+                UpdateSessionStateIfLocked(client, id, (int)lockId, state =>
                 {
                     state.Locked = false;
                     state.Timeout = sessionTimeoutMinutes;
@@ -345,7 +374,6 @@ namespace Harbour.RedisSessionStateStore
 
         public override void SetAndReleaseItemExclusive(HttpContext context, string id, SessionStateStoreData item, object lockId, bool newItem)
         {
-            var key = GetSessionIdKey(id);
             using (var client = GetClient())
             {
                 if (newItem)
@@ -356,11 +384,12 @@ namespace Harbour.RedisSessionStateStore
                         Timeout = item.Timeout,
                     };
 
+                    var key = GetSessionIdKey(id);
                     UpdateSessionState(client, key, state);
                 }
                 else
                 {
-                    UpdateSessionStateIfLocked(client, key, (int)lockId, state =>
+                    UpdateSessionStateIfLocked(client, id, (int)lockId, state =>
                     {
                         state.Items = (SessionStateItemCollection)item.Items;
                         state.Locked = false;
@@ -370,12 +399,14 @@ namespace Harbour.RedisSessionStateStore
             }
         }
 
-        private void UpdateSessionStateIfLocked(IRedisClient client, string key, int lockId, Action<RedisSessionState> stateAction)
+        private void UpdateSessionStateIfLocked(IRedisClient client, string id, int lockId, Action<RedisSessionState> stateAction)
         {
+            var key = GetSessionIdKey(id);
             using (var distributedLock = GetDistributedLock(client, key))
             {
                 if (distributedLock.LockState == DistributedLock.LOCK_NOT_ACQUIRED)
                 {
+                    options.OnDistributedLockNotAcquired(id);
                     return;
                 }
 
@@ -415,7 +446,5 @@ namespace Harbour.RedisSessionStateStore
                 clientManager.Dispose();
             }
         }
-
-#pragma warning restore 1591
     }
 }

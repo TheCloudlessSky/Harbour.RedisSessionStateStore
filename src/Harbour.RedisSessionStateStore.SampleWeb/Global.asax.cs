@@ -41,6 +41,16 @@ namespace Harbour.RedisSessionStateStore.SampleWeb
 
             this.clientManager = new PooledRedisClientManager("localhost:6379");
 
+            RedisSessionStateStoreProvider.SetOptions(new RedisSessionStateStoreOptions()
+            {
+                KeySeparator = ":",
+                OnDistributedLockNotAcquired = sessionId =>
+                {
+                    Console.WriteLine("Session \"{0}\" could not establish distributed lock. " +
+                                      "This most likely means you have to increase the " +
+                                      "DistributedLockAcquireSeconds/DistributedLockTimeoutSeconds.", sessionId);
+                }
+            });
             RedisSessionStateStoreProvider.SetClientManager(this.clientManager);
         }
 
