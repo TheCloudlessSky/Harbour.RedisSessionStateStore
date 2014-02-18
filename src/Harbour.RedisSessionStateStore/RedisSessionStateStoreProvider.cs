@@ -10,6 +10,7 @@ using ServiceStack.Redis;
 using System.Configuration.Provider;
 using System.IO;
 using System.Configuration;
+using ServiceStack.Redis.Support.Locking;
 
 namespace Harbour.RedisSessionStateStore
 {
@@ -157,6 +158,27 @@ namespace Harbour.RedisSessionStateStore
             }
         }
 
+        private IRedisClient GetClient()
+        {
+            return clientManager.GetClient();
+        }
+        
+        /// <summary>
+        /// Create a distributed lock for cases where more-than-a-transaction
+        /// is used but we need to prevent another request from modifying the
+        /// session. For example, if we need to get the session, mutate it and
+        /// then write it back. We can't use *just* a transaction for this 
+        /// approach because the data is returned with the rest of the commands!
+        /// </summary>
+        /// <param name="client"></param>
+        /// <param name="key"></param>
+        /// <returns></returns>
+        private DisposableDistributedLock GetDistributedLock(IRedisClient client, string key)
+        {
+            var lockKey = key + "/lock";
+            return new DisposableDistributedLock(client, lockKey, acquisitionTimeout: 1/*second*/, lockTimeout: 1/*second*/);
+        }
+
         private string GetSessionIdKey(string id)
         {
             return name + "/" + id;
@@ -165,7 +187,7 @@ namespace Harbour.RedisSessionStateStore
         public override void CreateUninitializedItem(HttpContext context, string id, int timeout)
         {
             var key = GetSessionIdKey(id);
-            WatchAndUseClient(key, client =>
+            using (var client = GetClient())
             {
                 var state = new RedisSessionState()
                 {
@@ -174,7 +196,7 @@ namespace Harbour.RedisSessionStateStore
                 };
 
                 UpdateSessionState(client, key, state);
-            });
+            }
         }
 
         public override SessionStateStoreData CreateNewStoreData(HttpContext context, int timeout)
@@ -194,59 +216,38 @@ namespace Harbour.RedisSessionStateStore
             
         }
 
-        private void WatchAndUseClient(string key, Action<IRedisClient> action)
-        {
-            using (var client = clientManager.GetClient())
-            {
-                try
-                {
-                    client.Watch(key);
-
-                    action(client);
-                }
-                finally
-                {
-                    // If EXEC or DISCARD are called, we don't need to UNWATCH.
-                    // However, when using the client, we might not ever enter a
-                    // transaction. Therefore, we always UNWATCH so that the 
-                    // connection can be used freely for new transactions 
-                    // (especially if the PooledRedisClientManager is used).
-                    client.UnWatch();
-                }
-            }
-        }
-
         private void UseTransaction(IRedisClient client, Action<IRedisTransaction> action)
         {
             using (var transaction = client.CreateTransaction())
             {
                 action(transaction);
-
-                // Attempt one retry if the transaction failed.
-                if (!transaction.Commit())
-                {
-                    transaction.Replay();
-                }
+                transaction.Commit();
             }
         }
 
         public override void ResetItemTimeout(HttpContext context, string id)
         {
             var key = GetSessionIdKey(id);
-            WatchAndUseClient(key, client =>
+            using (var client = GetClient())
             {
                 UseTransaction(client, transaction =>
                 {
                     transaction.QueueCommand(c => c.ExpireEntryIn(key, TimeSpan.FromMinutes(sessionTimeoutMinutes)));
                 });
-            });
+            };
         }
 
         public override void RemoveItem(HttpContext context, string id, object lockId, SessionStateStoreData item)
         {
             var key = GetSessionIdKey(id);
-            WatchAndUseClient(key, client =>
+            using (var client = GetClient())
+            using (var distributedLock = GetDistributedLock(client, key))
             {
+                if (distributedLock.LockState == DistributedLock.LOCK_NOT_ACQUIRED)
+                {
+                    return;
+                }
+
                 var stateRaw = client.GetAllEntriesFromHashRaw(key);
 
                 UseTransaction(client, transaction =>
@@ -257,7 +258,7 @@ namespace Harbour.RedisSessionStateStore
                         transaction.QueueCommand(c => c.Remove(key));
                     }
                 });
-            });
+            }
         }
 
         public override SessionStateStoreData GetItem(HttpContext context, string id, out bool locked, out TimeSpan lockAge, out object lockId, out SessionStateActions actions)
@@ -272,42 +273,45 @@ namespace Harbour.RedisSessionStateStore
 
         private SessionStateStoreData GetItem(bool isExclusive, HttpContext context, string id, out bool locked, out TimeSpan lockAge, out object lockId, out SessionStateActions actions)
         {
-            // Capture the out parameters since they can't be used inside of an
-            // anonymous method.
-            bool localLocked = false;
-            TimeSpan localLockAge = TimeSpan.Zero;
-            object localLockId = null;
-            SessionStateActions localActions = SessionStateActions.None;
+            locked = false;
+            lockAge = TimeSpan.Zero;
+            lockId = null;
+            actions = SessionStateActions.None;
             SessionStateStoreData result = null;
 
             var key = GetSessionIdKey(id);
-            WatchAndUseClient(key, client =>
+            using (var client = GetClient())
+            using (var distributedLock = GetDistributedLock(client, key))
             {
+                if (distributedLock.LockState == DistributedLock.LOCK_NOT_ACQUIRED)
+                {
+                    return null;
+                }
+
                 var stateRaw = client.GetAllEntriesFromHashRaw(key);
 
                 RedisSessionState state;
                 if (!RedisSessionState.TryParse(stateRaw, out state))
                 {
-                    return;
+                    return null;
                 }
 
-                localActions = state.Flags;
-                var items = localActions == SessionStateActions.InitializeItem ? new SessionStateItemCollection() : state.Items;
+                actions = state.Flags;
 
                 if (state.Locked)
                 {
-                    localLocked = true;
-                    localLockId = state.LockId;
-                    localLockAge = DateTime.UtcNow - state.LockDate;
-                    return;
+                    locked = true;
+                    lockId = state.LockId;
+                    lockAge = DateTime.UtcNow - state.LockDate;
+                    return null;
                 }
 
                 if (isExclusive)
                 {
-                    localLocked = state.Locked = true;
+                    locked = state.Locked = true;
                     state.LockDate = DateTime.UtcNow;
-                    localLockAge = TimeSpan.Zero;
-                    localLockId = ++state.LockId;
+                    lockAge = TimeSpan.Zero;
+                    lockId = ++state.LockId;
                 }
 
                 state.Flags = SessionStateActions.None;
@@ -318,34 +322,31 @@ namespace Harbour.RedisSessionStateStore
                     transaction.QueueCommand(c => c.ExpireEntryIn(key, TimeSpan.FromMinutes(state.Timeout)));
                 });
 
-                result = new SessionStateStoreData(items, staticObjectsGetter(context), state.Timeout);
-            });
+                var items = actions == SessionStateActions.InitializeItem ? new SessionStateItemCollection() : state.Items;
 
-            // Restore out parameters from the anonymous method.
-            locked = localLocked;
-            lockAge = localLockAge;
-            lockId = localLockId;
-            actions = localActions;
+                result = new SessionStateStoreData(items, staticObjectsGetter(context), state.Timeout);
+            }
+
             return result;
         }
 
         public override void ReleaseItemExclusive(HttpContext context, string id, object lockId)
         {
             var key = GetSessionIdKey(id);
-            WatchAndUseClient(key, client =>
+            using (var client = GetClient())
             {
                 UpdateSessionStateIfLocked(client, key, (int)lockId, state =>
                 {
                     state.Locked = false;
                     state.Timeout = sessionTimeoutMinutes;
                 });
-            });
+            }
         }
 
         public override void SetAndReleaseItemExclusive(HttpContext context, string id, SessionStateStoreData item, object lockId, bool newItem)
         {
             var key = GetSessionIdKey(id);
-            WatchAndUseClient(key, client =>
+            using (var client = GetClient())
             {
                 if (newItem)
                 {
@@ -366,17 +367,25 @@ namespace Harbour.RedisSessionStateStore
                         state.Timeout = item.Timeout;
                     });
                 }
-            });
+            }
         }
 
         private void UpdateSessionStateIfLocked(IRedisClient client, string key, int lockId, Action<RedisSessionState> stateAction)
         {
-            var stateRaw = client.GetAllEntriesFromHashRaw(key);
-            RedisSessionState state;
-            if (RedisSessionState.TryParse(stateRaw, out state) && state.Locked && state.LockId == (int)lockId)
+            using (var distributedLock = GetDistributedLock(client, key))
             {
-                stateAction(state);
-                UpdateSessionState(client, key, state);
+                if (distributedLock.LockState == DistributedLock.LOCK_NOT_ACQUIRED)
+                {
+                    return;
+                }
+
+                var stateRaw = client.GetAllEntriesFromHashRaw(key);
+                RedisSessionState state;
+                if (RedisSessionState.TryParse(stateRaw, out state) && state.Locked && state.LockId == lockId)
+                {
+                    stateAction(state);
+                    UpdateSessionState(client, key, state);
+                }
             }
         }
 

@@ -13,9 +13,9 @@
     <copyright>Copyright Harbour Inc. 2014</copyright>
     <tags>redis sessionstate session provider asp.net cache</tags>
     <dependencies>
-      <dependency id="ServiceStack.Common" version="[3.8,4)" />
-      <dependency id="ServiceStack.Redis" version="[3.8,4)" />
-      <dependency id="ServiceStack.Text" version="[3.8,4)" />
+      <dependency id="ServiceStack.Common" version="[3.9,4)" />
+      <dependency id="ServiceStack.Redis" version="[3.9,4)" />
+      <dependency id="ServiceStack.Text" version="[3.9,4)" />
     </dependencies>
   </metadata>
   <files>

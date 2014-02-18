@@ -27,6 +27,7 @@ App_Data/*
 -[Dd]ist
 [Bb]in
 [Dd]ebug*/
+lib/*
 obj/
 [Rr]elease*/
 _ReSharper*/
