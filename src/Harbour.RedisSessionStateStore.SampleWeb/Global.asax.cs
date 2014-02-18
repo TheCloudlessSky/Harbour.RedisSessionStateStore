@@ -40,7 +40,7 @@ namespace Harbour.RedisSessionStateStore.SampleWeb
             RegisterRoutes(RouteTable.Routes);
 
             this.clientManager = new PooledRedisClientManager("localhost:6379");
-
+            RedisSessionStateStoreProvider.SetClientManager(this.clientManager);
             RedisSessionStateStoreProvider.SetOptions(new RedisSessionStateStoreOptions()
             {
                 KeySeparator = ":",
@@ -51,7 +51,6 @@ namespace Harbour.RedisSessionStateStore.SampleWeb
                                       "DistributedLockAcquireSeconds/DistributedLockTimeoutSeconds.", sessionId);
                 }
             });
-            RedisSessionStateStoreProvider.SetClientManager(this.clientManager);
         }
 
         protected void Application_End()

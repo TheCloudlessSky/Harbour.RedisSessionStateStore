@@ -45,6 +45,18 @@ protected void Application_Start()
     // Or use your IoC container to wire this up.
     this.clientManager = new PooledRedisClientManager("localhost:6379");
     RedisSessionStateStoreProvider.SetClientManager(this.clientManager);
+
+    // Configure options on the provider.
+    RedisSessionStateStoreProvider.SetOptions(new RedisSessionStateStoreOptions()
+    {
+        KeySeparator = ":",
+        OnDistributedLockNotAcquired = sessionId =>
+        {
+            Console.WriteLine("Session \"{0}\" could not establish distributed lock. " +
+                              "This most likely means you have to increase the " +
+                              "DistributedLockAcquireSeconds/DistributedLockTimeoutSeconds.", sessionId);
+        }
+    });
 }
 
 protected void Application_End()
@@ -55,6 +67,11 @@ protected void Application_End()
 
 Changelog
 ---------
+
+### v1.3.0
+- Use a distributed lock rather than the WATCH/UNWATCH pattern because
+  it was causing issues.
+- Add the ability to configure the provider with static `SetOptions(options)`.
 
 ### v1.2.0
 - Always ensure UNWATCH is called.
