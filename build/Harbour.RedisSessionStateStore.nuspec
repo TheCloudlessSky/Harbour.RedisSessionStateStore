@@ -4,7 +4,7 @@
     <id>Harbour.RedisSessionStateStore</id>
     <version>1.3.0.0</version>
     <authors>Adrian Phinney</authors>
-    <!--<licenseUrl>http://LICENSE_URL_HERE_OR_DELETE_THIS_LINE</licenseUrl>-->
+    <licenseUrl>http://opensource.org/licenses/MIT</licenseUrl>
     <projectUrl>http://github.com/TheCloudlessSky/Harbour.RedisSessionStateStore</projectUrl>
     <!--<iconUrl>http://ICON_URL_HERE_OR_DELETE_THIS_LINE</iconUrl>
     <requireLicenseAcceptance>false</requireLicenseAcceptance>-->
