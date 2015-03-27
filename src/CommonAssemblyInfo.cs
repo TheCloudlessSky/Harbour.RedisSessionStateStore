@@ -10,7 +10,7 @@ using System.Runtime.InteropServices;
 [assembly: AssemblyProduct("Harbour.RedisSessionStateStore")]
 
 [assembly: AssemblyCompany("http://github.com/TheCloudlessSky/Harbour.RedisSessionStateStore")]
-[assembly: AssemblyCopyright("Copyright © Harbour Inc. 2014")]
+[assembly: AssemblyCopyright("Copyright © Harbour Inc. 2015")]
 [assembly: AssemblyDescription("An ASP.NET Redis SessionStateStoreProvider.")]
 
 [assembly: ComVisible(false)]

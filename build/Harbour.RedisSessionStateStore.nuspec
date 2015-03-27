@@ -2,7 +2,7 @@
 <package xmlns="http://schemas.microsoft.com/packaging/2010/07/nuspec.xsd">
   <metadata>
     <id>Harbour.RedisSessionStateStore</id>
-    <version>1.3.0.0</version>
+    <version>1.4.0.0</version>
     <authors>Adrian Phinney</authors>
     <licenseUrl>http://opensource.org/licenses/MIT</licenseUrl>
     <projectUrl>http://github.com/TheCloudlessSky/Harbour.RedisSessionStateStore</projectUrl>
@@ -10,7 +10,7 @@
     <requireLicenseAcceptance>false</requireLicenseAcceptance>-->
     <description>An ASP.NET Redis SessionStateStoreProvider.</description>
     <!--<releaseNotes>Initial release.</releaseNotes>-->
-    <copyright>Copyright Harbour Inc. 2014</copyright>
+    <copyright>Copyright Harbour Inc. 2015</copyright>
     <tags>redis sessionstate session provider asp.net cache</tags>
     <dependencies>
       <dependency id="ServiceStack.Common" version="[3.9,4)" />

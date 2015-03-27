@@ -68,6 +68,10 @@ protected void Application_End()
 Changelog
 ---------
 
+### v1.4.0
+- Use the `HttpContext.Session.Timeout` instead of the timeout from the `web.config`
+  so that the request can customize the session's timeout.
+
 ### v1.3.0
 - Use a distributed lock rather than the WATCH/UNWATCH pattern because
   it was causing issues.
