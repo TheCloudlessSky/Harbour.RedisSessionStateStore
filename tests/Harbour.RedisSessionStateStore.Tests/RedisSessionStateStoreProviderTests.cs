@@ -10,6 +10,9 @@ using System.Web;
 using Moq;
 using System.Web.SessionState;
 using System.Collections;
+using System.IO;
+using System.Runtime.Serialization;
+using System.Reflection;
 
 namespace Harbour.RedisSessionStateStore.Tests
 {
@@ -97,11 +100,11 @@ namespace Harbour.RedisSessionStateStore.Tests
 
             redis.SetSessionState(key, new RedisSessionState());
             redis.ExpireEntryIn(key, TimeSpan.FromMinutes(10));
+			var httpContext = CreateHttpContextWithSession(sessionTimeout: 20);
 
-            provider.ResetItemTimeout(null, "1234");
+            provider.ResetItemTimeout(httpContext, "1234");
 
             var ttl = redis.GetTimeToLive(key);
-            // Default from the web.config.
             Assert.Equal(20, ttl.TotalMinutes);
         }
 
@@ -191,13 +194,14 @@ namespace Harbour.RedisSessionStateStore.Tests
         {
             var provider = this.CreateProvider();
             var lockDate = DateTime.UtcNow;
+			var httpContext = CreateHttpContextWithSession(sessionTimeout: 20);
 
             redis.SetSessionState(key, new RedisSessionState()
             {
                 Locked = true, LockId = 222, LockDate = lockDate
             });
 
-            provider.ReleaseItemExclusive(null, "1234", 222);
+            provider.ReleaseItemExclusive(httpContext, "1234", 222);
 
             AssertState(key,
                 locked: false, lockId: 0, lockDate: DateTime.MinValue,
@@ -507,6 +511,22 @@ namespace Harbour.RedisSessionStateStore.Tests
 
             return provider;
         }
+
+		private HttpContext CreateHttpContextWithSession(int sessionTimeout)
+		{
+			var httpRequest = new HttpRequest("foo.html", "http://localhost/foo.html", "");
+			var httpResponse = new HttpResponse(TextWriter.Null);
+			var httpContext = new HttpContext(httpRequest, httpResponse);
+
+			// HACK: Initialize the session since we don't want to use the Web.config.
+			var httpSession = (HttpSessionState)FormatterServices.GetUninitializedObject(typeof(HttpSessionState));
+			typeof(HttpSessionState).GetField("_container", BindingFlags.NonPublic | BindingFlags.Instance)
+				.SetValue(httpSession, new Mock<IHttpSessionState>().SetupAllProperties().Object);
+			httpSession.Timeout = sessionTimeout;
+			httpContext.Items["AspSession"] = httpSession;
+
+			return httpContext;
+		}
     }
 
     internal static class RedisClientExtensions

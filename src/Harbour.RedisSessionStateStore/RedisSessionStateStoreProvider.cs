@@ -65,8 +65,6 @@ namespace Harbour.RedisSessionStateStore
         private bool manageClientManagerLifetime;
         private string name;
 
-        private int sessionTimeoutMinutes;
-
         /// <summary>
         /// Gets the client manager for the provider.
         /// </summary>
@@ -131,10 +129,6 @@ namespace Harbour.RedisSessionStateStore
 
             this.name = name;
             
-            var sessionConfig = (SessionStateSection)WebConfigurationManager.GetSection("system.web/sessionState");
-
-            sessionTimeoutMinutes = (int)sessionConfig.Timeout.TotalMinutes;
-
             lock (locker)
             {
                 if (options == null)
@@ -260,7 +254,7 @@ namespace Harbour.RedisSessionStateStore
             {
                 UseTransaction(client, transaction =>
                 {
-                    transaction.QueueCommand(c => c.ExpireEntryIn(key, TimeSpan.FromMinutes(sessionTimeoutMinutes)));
+                    transaction.QueueCommand(c => c.ExpireEntryIn(key, TimeSpan.FromMinutes(context.Session.Timeout)));
                 });
             };
         }
@@ -367,7 +361,7 @@ namespace Harbour.RedisSessionStateStore
                 UpdateSessionStateIfLocked(client, id, (int)lockId, state =>
                 {
                     state.Locked = false;
-                    state.Timeout = sessionTimeoutMinutes;
+                    state.Timeout = context.Session.Timeout;
                 });
             }
         }
